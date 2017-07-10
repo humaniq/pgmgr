@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"net/url"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -155,35 +155,52 @@ func (config *Config) applyArguments(ctx argumentContext) {
 }
 
 func (config *Config) overrideFromURL() {
-	// parse the DSN and populate the other configuration values. Some of the pg commands
-	// accept a DSN parameter, but not all, so this will help unify things.
-	r := regexp.MustCompile("^postgres://(.*)@(.*):([0-9]+)/([^?]+)")
-	m := r.FindStringSubmatch(config.URL)
-	if len(m) > 0 {
-		user := m[1]
-		config.Host = m[2]
-		config.Port, _ = strconv.Atoi(m[3])
-		config.Database = m[4]
+	u, err := url.Parse(config.URL)
+	if err != nil {
+		println("Could not parse URL: ", config.URL, " ignoring")
+		return
+	}
 
-		userRegex := regexp.MustCompile("^(.*):(.*)$")
-		userMatch := userRegex.FindStringSubmatch(user)
+	if u.Scheme != "postgres" {
+		println("Invalid URL scheme ", u.Scheme)
+	}
 
-		if len(userMatch) > 0 {
-			config.Username = userMatch[1]
-			config.Password = userMatch[2]
+	portstring := u.Port()
+	if portstring != "" {
+		port, err := strconv.Atoi(portstring)
+		if err != nil {
+			println("Invalid port: ", portstring)
 		} else {
-			config.Username = user
+			config.Port = port
 		}
+	}
 
-		queryRegex := regexp.MustCompile("([a-zA-Z0-9_-]+)=([a-zA-Z0-9_-]+)")
-		matches := queryRegex.FindAllStringSubmatch(config.URL, -1)
-		for _, match := range matches {
-			if match[1] == "sslmode" {
-				config.SslMode = match[2]
-			}
+	hostname := u.Hostname()
+	if hostname != "" {
+		config.Host = hostname
+	}
+
+	user := u.User
+	if user != nil {
+		username := user.Username()
+		if username != "" {
+			config.Username = username
 		}
-	} else {
-		println("Could not parse DSN:  ", config.URL, " using regex ", r.String())
+		p, exists := user.Password()
+		if exists {
+			config.Password = p
+		}
+	}
+
+	path := u.Path
+	if path != "" {
+		config.Database = path[1:]
+	}
+
+	querymap := u.Query()
+	sslmode := querymap.Get("sslmode")
+	if sslmode != "" {
+		config.SslMode = sslmode
 	}
 }
 
